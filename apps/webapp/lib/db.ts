@@ -1,5 +1,5 @@
 import { NODE_ENV } from '@/lib/env';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
@@ -11,8 +11,38 @@ const basePrisma = globalForPrisma.prisma ?? new PrismaClient();
 
 if (NODE_ENV !== 'production') globalForPrisma.prisma = basePrisma;
 
+const getDirectDatabaseUrl = () => {
+  const directUrlEnvVars = [
+    'POSTGRES_URL_NON_POOLING',
+    'DIRECT_URL',
+    'POSTGRES_PRISMA_DIRECT_URL',
+    'POSTGRES_DIRECT_URL',
+    'DATABASE_DIRECT_URL',
+    'DATABASE_MIGRATION_URL',
+  ] as const;
+
+  for (const key of directUrlEnvVars) {
+    const value = process.env[key];
+    if (typeof value === 'string' && value.length > 0) {
+      return value;
+    }
+  }
+
+  return undefined;
+};
+
 const ensureHasGraphsColumn = async () => {
-  const guardPrisma = new PrismaClient();
+  const directDatabaseUrl = getDirectDatabaseUrl();
+
+  const guardPrisma = directDatabaseUrl
+    ? new PrismaClient({
+        datasources: {
+          db: {
+            url: directDatabaseUrl,
+          },
+        },
+      })
+    : new PrismaClient();
 
   try {
     const result = await guardPrisma.$queryRaw<{ exists: boolean }[]>`
@@ -41,6 +71,19 @@ const ensureHasGraphsColumn = async () => {
         error.message.includes('column "hasGraphs" of relation "SourceSet" already exists')
       ) {
         return;
+      }
+
+      if (
+        (error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2010' &&
+          typeof error.meta?.message === 'string' &&
+          error.meta.message.includes('must be owner of table SourceSet')) ||
+        (error instanceof Error && error.message.includes('must be owner of table SourceSet'))
+      ) {
+        throw new Error(
+          'SourceSet.hasGraphs column is missing and automatic migration failed because the configured direct database connection lacks permission to ALTER the SourceSet table. Run `prisma migrate deploy` using a role that owns the table or update POSTGRES_URL_NON_POOLING to use an owner role.',
+          { cause: error }
+        );
       }
 
       throw error;
