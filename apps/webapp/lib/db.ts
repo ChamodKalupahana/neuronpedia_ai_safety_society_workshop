@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client';
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
   ensureHasGraphsColumnPromise: Promise<void> | undefined;
+  hasRegisteredGuard: boolean | undefined;
 };
 
 const basePrisma = globalForPrisma.prisma ?? new PrismaClient();
@@ -51,13 +52,13 @@ export const ensurePrismaSchemaReady = () => {
   return globalForPrisma.ensureHasGraphsColumnPromise;
 };
 
-export const prisma = basePrisma.$extends({
-  query: {
-    $allModels: {
-      async $allOperations({ args, query }) {
-        await ensurePrismaSchemaReady();
-        return query(args);
-      },
-    },
-  },
-});
+if (!globalForPrisma.hasRegisteredGuard) {
+  basePrisma.$use(async (params, next) => {
+    await ensurePrismaSchemaReady();
+    return next(params);
+  });
+
+  globalForPrisma.hasRegisteredGuard = true;
+}
+
+export const prisma = basePrisma;
