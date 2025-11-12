@@ -12,35 +12,41 @@ const basePrisma = globalForPrisma.prisma ?? new PrismaClient();
 if (NODE_ENV !== 'production') globalForPrisma.prisma = basePrisma;
 
 const ensureHasGraphsColumn = async () => {
-  const result = await basePrisma.$queryRaw<{ exists: boolean }[]>`
-    SELECT EXISTS (
-      SELECT 1
-      FROM information_schema.columns
-      WHERE table_schema = current_schema()
-        AND table_name = 'SourceSet'
-        AND column_name = 'hasGraphs'
-    ) AS "exists";
-  `;
-
-  const hasColumn = result?.[0]?.exists ?? false;
-
-  if (hasColumn) {
-    return;
-  }
+  const guardPrisma = new PrismaClient();
 
   try {
-    await basePrisma.$executeRawUnsafe(
-      'ALTER TABLE "SourceSet" ADD COLUMN "hasGraphs" BOOLEAN NOT NULL DEFAULT false;'
-    );
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes('column "hasGraphs" of relation "SourceSet" already exists')
-    ) {
+    const result = await guardPrisma.$queryRaw<{ exists: boolean }[]>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'SourceSet'
+          AND column_name = 'hasGraphs'
+      ) AS "exists";
+    `;
+
+    const hasColumn = result?.[0]?.exists ?? false;
+
+    if (hasColumn) {
       return;
     }
 
-    throw error;
+    try {
+      await guardPrisma.$executeRawUnsafe(
+        'ALTER TABLE "SourceSet" ADD COLUMN "hasGraphs" BOOLEAN NOT NULL DEFAULT false;'
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes('column "hasGraphs" of relation "SourceSet" already exists')
+      ) {
+        return;
+      }
+
+      throw error;
+    }
+  } finally {
+    await guardPrisma.$disconnect();
   }
 };
 
