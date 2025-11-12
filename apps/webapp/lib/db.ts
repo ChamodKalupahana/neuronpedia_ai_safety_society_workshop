@@ -11,24 +11,26 @@ const basePrisma = globalForPrisma.prisma ?? new PrismaClient();
 if (NODE_ENV !== 'production') globalForPrisma.prisma = basePrisma;
 
 const ensureHasGraphsColumn = async () => {
+  const result = await basePrisma.$queryRaw<{ exists: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'SourceSet'
+        AND column_name = 'hasGraphs'
+    ) AS "exists";
+  `;
+
+  const hasColumn = result?.[0]?.exists ?? false;
+
+  if (hasColumn) {
+    return;
+  }
+
   try {
-    const result = await basePrisma.$queryRaw<{ exists: boolean }[]>`
-      SELECT EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = current_schema()
-          AND table_name = 'SourceSet'
-          AND column_name = 'hasGraphs'
-      ) AS "exists";
-    `;
-
-    const hasColumn = result?.[0]?.exists;
-
-    if (!hasColumn) {
-      await basePrisma.$executeRawUnsafe(
-        'ALTER TABLE "SourceSet" ADD COLUMN "hasGraphs" BOOLEAN NOT NULL DEFAULT false;'
-      );
-    }
+    await basePrisma.$executeRawUnsafe(
+      'ALTER TABLE "SourceSet" ADD COLUMN "hasGraphs" BOOLEAN NOT NULL DEFAULT false;'
+    );
   } catch (error) {
     if (
       error instanceof Error &&
@@ -37,7 +39,7 @@ const ensureHasGraphsColumn = async () => {
       return;
     }
 
-    console.error('Failed to ensure SourceSet.hasGraphs column exists', error);
+    throw error;
   }
 };
 
@@ -48,8 +50,6 @@ export const ensurePrismaSchemaReady = () => {
 
   return globalForPrisma.ensureHasGraphsColumnPromise;
 };
-
-void ensurePrismaSchemaReady();
 
 export const prisma = basePrisma.$extends({
   query: {
